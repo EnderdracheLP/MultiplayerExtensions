@@ -5,6 +5,7 @@ using SiraUtil.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using IPA.Loader;
 using Tweening;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -19,6 +20,7 @@ namespace MultiplayerExtensions.Patchers
         private readonly GameScenesManager _scenesManager;
         private readonly Config _config;
         private readonly SiraLog _logger;
+        private readonly PluginMetadata _chromaMetadata;
 
         internal EnvironmentPatcher(
             GameScenesManager scenesManager,
@@ -28,6 +30,7 @@ namespace MultiplayerExtensions.Patchers
             _scenesManager = scenesManager;
             _config = config;
             _logger = logger;
+            _chromaMetadata = PluginManager.GetPlugin("Chroma");
         }
 
         private List<MonoBehaviour> _behavioursToInject = new();
@@ -155,7 +158,7 @@ namespace MultiplayerExtensions.Patchers
         private bool IHateChromaTrackLaneRingInjection(DiContainer __instance,
 	        ref object instance)
         {
-	        if (_scenesManager.IsSceneInStack("MultiplayerEnvironment") && _config.SoloEnvironment && instance is LightPairRotationEventEffect lightPair)
+	        if (PluginManager.IsEnabled(_chromaMetadata) && _scenesManager.IsSceneInStack("MultiplayerEnvironment") && _config.SoloEnvironment && instance is LightPairRotationEventEffect lightPair)
 	        {
 		        _logger.Trace($"Preventing TrackLaneRing {lightPair.name} injection, parent go name: {lightPair.transform.parent.gameObject.name}");
 		        lightPair.transform.parent.gameObject.SetActive(false);
@@ -260,31 +263,33 @@ namespace MultiplayerExtensions.Patchers
 
 			DiContainer container = __instance.GetProperty<DiContainer, MonoInstallerBase>("Container");
 
-			var trackLaneRingsManagers = _objectsToEnable.SelectMany(gameObject =>
-				gameObject.transform.GetComponentsInChildren<TrackLaneRingsManager>());
-
-			foreach (var trackLaneRingsManager in trackLaneRingsManagers)
+			if (PluginManager.IsEnabled(_chromaMetadata))
 			{
-				if (trackLaneRingsManager == null)
-                    continue;
+				var trackLaneRingsManagers = _objectsToEnable.SelectMany(gameObject =>
+					gameObject.transform.GetComponentsInChildren<TrackLaneRingsManager>());
 
-				foreach (var rings in trackLaneRingsManager.Rings)
+				foreach (var trackLaneRingsManager in trackLaneRingsManagers)
 				{
-                    if (rings == null)
-                        continue;
+					if (trackLaneRingsManager == null || trackLaneRingsManager.Rings == null)
+						continue;
 
-                    _logger.Trace($"Fixing injection and enabling go {rings.gameObject.name}");
+					foreach (var rings in trackLaneRingsManager.Rings)
+					{
+						if (rings == null)
+							continue;
 
-                    List<MonoBehaviour> injectables = new();
-                    ZenUtilInternal.GetInjectableMonoBehavioursUnderGameObject(rings.gameObject, injectables);
-                    foreach (var behaviour in injectables) container.Inject(behaviour);
-                    rings.gameObject.SetActive(true);
+						_logger.Trace($"Fixing injection and enabling go {rings.gameObject.name}");
+
+						List<MonoBehaviour> injectables = new();
+						ZenUtilInternal.GetInjectableMonoBehavioursUnderGameObject(rings.gameObject, injectables);
+						foreach (var behaviour in injectables) container.Inject(behaviour);
+						rings.gameObject.SetActive(true);
+					}
 				}
 			}
 
 
-
-            var colorManager = container.Resolve<EnvironmentColorManager>();
+			var colorManager = container.Resolve<EnvironmentColorManager>();
             container.Inject(colorManager);
             colorManager.Awake();
 
