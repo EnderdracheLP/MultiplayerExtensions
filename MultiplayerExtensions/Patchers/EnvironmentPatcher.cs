@@ -1,11 +1,12 @@
 ﻿using HarmonyLib;
+using IPA.Loader;
 using IPA.Utilities;
 using SiraUtil.Affinity;
 using SiraUtil.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
-using IPA.Loader;
 using Tweening;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -152,21 +153,55 @@ namespace MultiplayerExtensions.Patchers
             }
         }
 
+        //List<LightPairRotationEventEffect> lightPairs = new List<LightPairRotationEventEffect>();
+
 		// Fixes for Chromas TrackLaneRingInjection, see https://github.com/Aeroluna/Heck/blob/027ac8fc435afba7642aed57a251f7b991f32221/Chroma/HarmonyPatches/EnvironmentComponent/RingAwakeInstantiator.cs#L69
 		[AffinityPrefix]
         [AffinityPatch(typeof(DiContainer), nameof(DiContainer.QueueForInject))]
         private bool IHateChromaTrackLaneRingInjection(DiContainer __instance,
 	        ref object instance)
         {
-	        if (PluginManager.IsEnabled(_chromaMetadata) && _scenesManager.IsSceneInStack("MultiplayerEnvironment") && _config.SoloEnvironment && instance is LightPairRotationEventEffect lightPair)
-	        {
-		        _logger.Trace($"Preventing TrackLaneRing {lightPair.name} injection, parent go name: {lightPair.transform.parent.gameObject.name}");
-		        lightPair.transform.parent.gameObject.SetActive(false);
+            bool isChromaInjected = false;
+            if (PluginManager.IsEnabled(_chromaMetadata)  && _scenesManager.IsSceneInStack("MultiplayerEnvironment") && _config.SoloEnvironment && instance is LightPairRotationEventEffect lightPair)
+            {
+                var trace = new StackTrace();
+                //var frame0 = trace.GetFrame(0); // 0 = current method, 1 = harmony patch, 2 = dmd
+                //var frame1 = trace.GetFrame(1); // 0 = current method, 1 = harmony patch, 2 = dmd
+                //            var frame2 = trace.GetFrame(2);
+                //            var frame3 = trace.GetFrame(3);
+                var frame4 = trace.GetFrame(4);
+                //var method0 = frame0.GetMethod();
+                //            var method1 = frame1.GetMethod();
+                //            var method2 = frame2.GetMethod();
+                //            var method3 = frame3.GetMethod();
+                var method4 = frame4.GetMethod();
 
-				return false;
-	        }
+				//_logger.Trace($"DiContainer.QueueForInject call stack:");
+				//            _logger.Trace($"  at {method4.DeclaringType.FullName}.{method4.Name}");
+				//            _logger.Trace($"  at {method3.DeclaringType.FullName}.{method3.Name}");
+				//            _logger.Trace($"  at {method2.DeclaringType.FullName}.{method2.Name}");
+				//            _logger.Trace($"  at {method1.DeclaringType.FullName}.{method1.Name}");
+				//            _logger.Trace($"  at {method0.DeclaringType.FullName}.{method0.Name}");
 
-	        return true;
+				_logger.Trace($"DiContainer.QueueForInject called from method: {method4.DeclaringType.FullName}.{method4.Name}, instance type: {instance.GetType().FullName}");
+
+				//_logger.Trace($"DiContainer.QueueForInject called from method: {method.DeclaringType.FullName}.{method.Name}, instance type: {instance.GetType().FullName}");
+
+				// Chroma.HarmonyPatches.EnvironmentComponent.RingAwakeInstantiator.QueueInject
+				isChromaInjected = method4.DeclaringType.FullName.StartsWith("Chroma") && method4.DeclaringType.FullName.EndsWith("RingAwakeInstantiator") &&
+                                       method4.Name == "QueueInject";
+
+				if (isChromaInjected)
+				{
+					_logger.Trace($"Preventing TrackLaneRing {lightPair.name} injection, parent go name: {lightPair.transform.parent.gameObject.name}");
+					lightPair.transform.parent.gameObject.SetActive(false);
+					//lightPairs.Add(lightPair);
+
+					return false;
+				} else _logger.Trace($"Not preventing injection for LightPairRotationEventEffect {lightPair.name}");
+			}
+
+			return true;
         }
 
         [AffinityPrefix]
@@ -265,6 +300,9 @@ namespace MultiplayerExtensions.Patchers
 
 			if (PluginManager.IsEnabled(_chromaMetadata))
 			{
+                //// Temp clear list
+                //lightPairs.Clear();
+
 				var trackLaneRingsManagers = _objectsToEnable.SelectMany(gameObject =>
 					gameObject.transform.GetComponentsInChildren<TrackLaneRingsManager>());
 
