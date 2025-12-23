@@ -1,11 +1,12 @@
 ﻿using HarmonyLib;
+using IPA.Loader;
 using IPA.Utilities;
 using SiraUtil.Affinity;
 using SiraUtil.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
-using IPA.Loader;
 using Tweening;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -17,6 +18,8 @@ namespace MultiplayerExtensions.Patchers
     [HarmonyPatch]
     public class EnvironmentPatcher : IAffinity
     {
+        public EnvironmentPatcher Instance { get; private set; }
+
         private readonly GameScenesManager _scenesManager;
         private readonly Config _config;
         private readonly SiraLog _logger;
@@ -31,13 +34,15 @@ namespace MultiplayerExtensions.Patchers
             _config = config;
             _logger = logger;
             _chromaMetadata = PluginManager.GetPlugin("Chroma");
+            Instance = this;
+
         }
 
         private List<MonoBehaviour> _behavioursToInject = new();
 
         [AffinityPostfix]
-		[AffinityPriority(Priority.High)]
-		[AffinityPatch(typeof(SceneDecoratorContext), "GetInjectableMonoBehaviours")]
+        [AffinityPriority(Priority.High)]
+        [AffinityPatch(typeof(SceneDecoratorContext), "GetInjectableMonoBehaviours")]
         private void PreventEnvironmentInjection(SceneDecoratorContext __instance, List<MonoBehaviour> monoBehaviours, DiContainer ____container)
         {
             var scene = __instance.gameObject.scene;
@@ -46,17 +51,17 @@ namespace MultiplayerExtensions.Patchers
                 _logger.Info($"Fixing bind conflicts on scene '{scene.name}'.");
                 List<MonoBehaviour> removedBehaviours = new();
 
-	            if (scene.name.Contains("Environment") && !scene.name.Contains("Multiplayer"))
+                if (scene.name.Contains("Environment") && !scene.name.Contains("Multiplayer"))
                     removedBehaviours.AddRange(monoBehaviours.FindAll(behaviour => (behaviour is ZenjectBinding binding && binding.Components.Any(c => c is LightWithIdManager))));
 
                 if (removedBehaviours.Any())
                 {
-                    string removedBehaviourStr = string.Join(", ", 
-                        removedBehaviours.Select(behaviour => (behaviour is ZenjectBinding binding ? 
-                            string.Join(", ", binding.Components.Select(comp => (comp.GetType() + " " + comp.gameObject.name))) : 
+                    string removedBehaviourStr = string.Join(", ",
+                        removedBehaviours.Select(behaviour => (behaviour is ZenjectBinding binding ?
+                            string.Join(", ", binding.Components.Select(comp => (comp.GetType() + " " + comp.gameObject.name))) :
                             (behaviour.GetType() + " " + behaviour.gameObject.name))));
 
-					_logger.Info($"Removing behaviours '{removedBehaviourStr}' from scene '{scene.name}'.");
+                    _logger.Info($"Removing behaviours '{removedBehaviourStr}' from scene '{scene.name}'.");
                     monoBehaviours.RemoveAll(monoBehaviour => removedBehaviours.Contains(monoBehaviour));
                 }
 
@@ -80,7 +85,7 @@ namespace MultiplayerExtensions.Patchers
         private List<MonoInstaller> _installerPrefabs = new();
 
         [AffinityPrefix]
-		[AffinityPatch(typeof(SceneDecoratorContext), "InstallDecoratorInstallers")]
+        [AffinityPatch(typeof(SceneDecoratorContext), "InstallDecoratorInstallers")]
         private void PreventEnvironmentInstall(SceneDecoratorContext __instance, List<InstallerBase> ____normalInstallers, List<Type> ____normalInstallerTypes, List<ScriptableObjectInstaller> ____scriptableObjectInstallers, List<MonoInstaller> ____monoInstallers, List<MonoInstaller> ____installerPrefabs)
         {
             var scene = __instance.gameObject.scene;
@@ -110,10 +115,10 @@ namespace MultiplayerExtensions.Patchers
             }
         }
 
-		private List<GameObject> _objectsToEnable = new();
+        private List<GameObject> _objectsToEnable = new();
 
         [AffinityPrefix]
-		[AffinityPatch(typeof(GameScenesManager), "ActivatePresentedSceneRootObjects")]
+        [AffinityPatch(typeof(GameScenesManager), "ActivatePresentedSceneRootObjects")]
         private void PreventEnvironmentActivation(List<string> scenesToPresent)
         {
             _logger.Trace($"ScenesToPresent {string.Join(", ", scenesToPresent)}");
@@ -142,35 +147,41 @@ namespace MultiplayerExtensions.Patchers
         }
 
         [AffinityPostfix]
-		[AffinityPatch(typeof(GameObjectContext), "GetInjectableMonoBehaviours")]
+        [AffinityPatch(typeof(GameObjectContext), "GetInjectableMonoBehaviours")]
         private void InjectEnvironment(GameObjectContext __instance, List<MonoBehaviour> monoBehaviours)
         {
-	        if (__instance.transform.name.Contains("LocalActivePlayer") && _config.SoloEnvironment)
+            if (__instance.transform.name.Contains("LocalActivePlayer") && _config.SoloEnvironment)
             {
                 _logger.Info($"Injecting environment.");
                 monoBehaviours.AddRange(_behavioursToInject);
             }
         }
 
-		// Fixes for Chromas TrackLaneRingInjection, see https://github.com/Aeroluna/Heck/blob/027ac8fc435afba7642aed57a251f7b991f32221/Chroma/HarmonyPatches/EnvironmentComponent/RingAwakeInstantiator.cs#L69
-		[AffinityPrefix]
+        // Fixes for Chromas TrackLaneRingInjection, see https://github.com/Aeroluna/Heck/blob/027ac8fc435afba7642aed57a251f7b991f32221/Chroma/HarmonyPatches/EnvironmentComponent/RingAwakeInstantiator.cs#L69
+        [AffinityPrefix]
         [AffinityPatch(typeof(DiContainer), nameof(DiContainer.QueueForInject))]
         private bool IHateChromaTrackLaneRingInjection(DiContainer __instance,
-	        ref object instance)
+            ref object instance)
         {
-	        if (PluginManager.IsEnabled(_chromaMetadata) && _scenesManager.IsSceneInStack("MultiplayerEnvironment") && _config.SoloEnvironment && instance is LightPairRotationEventEffect lightPair)
-	        {
-		        _logger.Trace($"Preventing TrackLaneRing {lightPair.name} injection, parent go name: {lightPair.transform.parent.gameObject.name}");
-		        lightPair.transform.parent.gameObject.SetActive(false);
+            var trace = new StackTrace();
+            var frame = trace.GetFrame(1); // 0 = current method, 1 = caller
+            var method = frame.GetMethod();
 
-				return false;
-	        }
+            // TODO: Potential solution, check if the call to this function originates from Chroma, using the backtrace.
+            if (PluginManager.IsEnabled(_chromaMetadata) && _scenesManager.IsSceneInStack("MultiplayerEnvironment") && _config.SoloEnvironment && instance is LightPairRotationEventEffect lightPair)
+            {
+                _logger.Trace($"Called by: {method.Name}");
+                _logger.Trace($"Preventing TrackLaneRing {lightPair.name} injection, parent go name: {lightPair.transform.parent.gameObject.name}");
+                lightPair.transform.parent.gameObject.SetActive(false);
 
-	        return true;
+                return false;
+            }
+
+            return true;
         }
 
         [AffinityPrefix]
-		[AffinityPatch(typeof(Context), "InstallInstallers", AffinityMethodType.Normal, null, typeof(List<InstallerBase>), typeof(List<Type>), typeof(List<ScriptableObjectInstaller>), typeof(List<MonoInstaller>), typeof(List<MonoInstaller>))]
+        [AffinityPatch(typeof(Context), "InstallInstallers", AffinityMethodType.Normal, null, typeof(List<InstallerBase>), typeof(List<Type>), typeof(List<ScriptableObjectInstaller>), typeof(List<MonoInstaller>), typeof(List<MonoInstaller>))]
         private void InstallEnvironment(Context __instance, List<InstallerBase> normalInstallers, List<Type> normalInstallerTypes, List<ScriptableObjectInstaller> scriptableObjectInstallers, List<MonoInstaller> installers, List<MonoInstaller> installerPrefabs)
         {
             if (__instance is GameObjectContext instance && __instance.transform.name.Contains("LocalActivePlayer") && _config.SoloEnvironment)
@@ -184,14 +195,16 @@ namespace MultiplayerExtensions.Patchers
             }
         }
 
-       
+
         [AffinityPrefix]
-		[AffinityPatch(typeof(GameObjectContext), "InstallInstallers")]
-        private void LoveYouCountersPlus(GameObjectContext __instance)
+        [AffinityPatch(typeof(Context), "InstallInstallers", AffinityMethodType.Normal, 
+            new AffinityArgumentType[] {AffinityArgumentType.Normal, AffinityArgumentType.Normal , AffinityArgumentType.Normal , AffinityArgumentType.Normal , AffinityArgumentType.Normal }, 
+            new Type[] { typeof(List<InstallerBase>), typeof(List<Type>), typeof(List<ScriptableObjectInstaller>), typeof(List<MonoInstaller>), typeof(List<MonoInstaller>) })]
+        private void LoveYouCountersPlus(Context __instance)
         {
-            if (__instance.transform.name.Contains("LocalActivePlayer") && _config.SoloEnvironment)
+            if (__instance is GameObjectContext gocInstance && __instance.transform.name.Contains("LocalActivePlayer") && _config.SoloEnvironment)
             {
-                DiContainer container = __instance.GetProperty<DiContainer, GameObjectContext>("Container");
+                DiContainer container = gocInstance.GetProperty<DiContainer, GameObjectContext>("Container");
                 var hud = (CoreGameHUDController)_behavioursToInject.Find(x => x is CoreGameHUDController);
                 container.Unbind<CoreGameHUDController>();
                 container.Bind<CoreGameHUDController>().FromInstance(hud).AsSingle();
@@ -203,10 +216,10 @@ namespace MultiplayerExtensions.Patchers
         }
 
         [AffinityPostfix]
-		[AffinityPatch(typeof(GameObjectContext), "InstallSceneBindings")]
-        private void ActivateEnvironment(GameObjectContext __instance)
+		[AffinityPatch(typeof(Context), "InstallSceneBindings")]
+        private void ActivateEnvironment(Context __instance)
         {
-            if (__instance.transform.name.Contains("LocalActivePlayer") && _config.SoloEnvironment)
+            if (__instance is GameObjectContext gocInstance && __instance.transform.name.Contains("LocalActivePlayer") && _config.SoloEnvironment)
             {
                 _logger.Info($"Activating environment.");
                 foreach (GameObject gameObject in _objectsToEnable)

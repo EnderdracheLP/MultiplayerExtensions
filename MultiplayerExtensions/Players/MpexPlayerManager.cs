@@ -16,12 +16,12 @@ namespace MultiplayerExtensions.Players
 		private ConcurrentDictionary<string, MpexPlayerData> _playerData = new();
 
 		private readonly MpPacketSerializer _packetSerializer;
-		private readonly IMultiplayerSessionManager _sessionManager;
+		private readonly IBeatSaberMultiplayerSessionManager _sessionManager;
 		private readonly Config _config;
 
 		internal MpexPlayerManager(
 			MpPacketSerializer packetSerializer,
-			IMultiplayerSessionManager sessionManager,
+			IBeatSaberMultiplayerSessionManager sessionManager,
 			Config config)
 		{
 			_packetSerializer = packetSerializer;

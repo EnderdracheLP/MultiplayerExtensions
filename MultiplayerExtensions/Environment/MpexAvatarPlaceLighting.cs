@@ -16,13 +16,13 @@ namespace MultiplayerExtensions.Environments
 
         private List<TubeBloomPrePassLight> _lights = new List<TubeBloomPrePassLight>();
 
-        private IMultiplayerSessionManager _sessionManager = null!;
+        private IBeatSaberMultiplayerSessionManager _sessionManager = null!;
         private MpexPlayerManager _mpexPlayerManager = null!;
         private Config _config = null!;
 
         [Inject]
         internal void Construct(
-            IMultiplayerSessionManager sessionManager,
+            IBeatSaberMultiplayerSessionManager sessionManager,
             MpexPlayerManager mpexPlayerManager,
             Config config)
         {
