@@ -225,8 +225,6 @@ namespace MultiplayerExtensions.Patchers
 				{
 					_logger.Debug($"Preventing TrackLaneRing {lightPair.name} injection, parent go name: {lightPair.transform.parent.gameObject.name}");
 					lightPair.transform.parent.gameObject.SetActive(false);
-					//lightPairs.Add(lightPair);
-
 					return false;
 				} else _logger.Debug($"Not preventing injection for LightPairRotationEventEffect {lightPair.name}");
 			}
