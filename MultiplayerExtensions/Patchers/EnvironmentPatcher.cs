@@ -150,31 +150,56 @@ namespace MultiplayerExtensions.Patchers
             {
                 _logger.Info($"Injecting environment.");
                 monoBehaviours.AddRange(_behavioursToInject);
+                // Check if the list contains the LightPairRotationEventEffect which is used for the track lane ring lights, and if so, set _chromaInjected to false since this likely means it's not chroma injection
+                if (_behavioursToInject.Any(behaviour => behaviour is LightPairRotationEventEffect))
+                {
+                    _logger.Info($"LightPairRotationEventEffect found in behaviours to inject, this likely means it's not chroma injection");
+                    _chromaInjected = false; // Settings this to false, as base game injection is about to be run.
+                }
+                else
+                {
+                    _logger.Info($"No LightPairRotationEventEffect found in behaviours to inject, this likely means it's chroma injection");
+					//_chromaInjected = true; // Not setting this, due to this function being called after chromas injection ran.
+                }
+			}
+		}
+
+		#region ChromaFixes
+		// Fixes for Chromas TrackLaneRingInjection, see https://github.com/Aeroluna/Heck/blob/027ac8fc435afba7642aed57a251f7b991f32221/Chroma/HarmonyPatches/EnvironmentComponent/RingAwakeInstantiator.cs#L69
+		private bool _chromaInjected = false;
+
+        [AffinityPrefix]
+        [AffinityBefore("Chroma")]
+        [AffinityPatch(typeof(TrackLaneRingsManager), nameof(TrackLaneRingsManager.Start))]
+        private void CheckTrackLaneRingInjectionStart(TrackLaneRingsManager __instance)
+        {
+            if (PluginManager.IsEnabled(_chromaMetadata) && _scenesManager.IsSceneInStack("MultiplayerEnvironment") && _config.SoloEnvironment && SongCore.Collections.capabilities.Contains("Chroma"))
+            {
+                _logger.Info($"Chroma detected, we have the multiplayer environment with solo environment enabled, and SongCore capabilities contain Chroma, assuming light will be injected by chroma, setting _chromaInjected to true");
+                // We will always assume chroma injection if we're in the multiplayer environment with solo environment enabled and SongCore capabilities contain Chroma.
+                // The actual check happens above in the InjectEnvironment patch, due to the order in which the functions run, between a basegame and chroma injection
+                _chromaInjected = true;
             }
         }
 
-        //List<LightPairRotationEventEffect> lightPairs = new List<LightPairRotationEventEffect>();
-
-		// Fixes for Chromas TrackLaneRingInjection, see https://github.com/Aeroluna/Heck/blob/027ac8fc435afba7642aed57a251f7b991f32221/Chroma/HarmonyPatches/EnvironmentComponent/RingAwakeInstantiator.cs#L69
-		[AffinityPrefix]
+        [AffinityPrefix]
         [AffinityPatch(typeof(DiContainer), nameof(DiContainer.QueueForInject))]
         private bool IHateChromaTrackLaneRingInjection(DiContainer __instance,
 	        ref object instance)
         {
-            bool isChromaInjected = false;
             if (PluginManager.IsEnabled(_chromaMetadata)  && _scenesManager.IsSceneInStack("MultiplayerEnvironment") && _config.SoloEnvironment && instance is LightPairRotationEventEffect lightPair)
             {
-                var trace = new StackTrace();
-                //var frame0 = trace.GetFrame(0); // 0 = current method, 1 = harmony patch, 2 = dmd
-                //var frame1 = trace.GetFrame(1); // 0 = current method, 1 = harmony patch, 2 = dmd
-                //            var frame2 = trace.GetFrame(2);
-                //            var frame3 = trace.GetFrame(3);
-                var frame4 = trace.GetFrame(4);
-                //var method0 = frame0.GetMethod();
-                //            var method1 = frame1.GetMethod();
-                //            var method2 = frame2.GetMethod();
-                //            var method3 = frame3.GetMethod();
-                var method4 = frame4.GetMethod();
+				var trace = new StackTrace();
+				//            var frame0 = trace.GetFrame(0); // 0 = current method
+				//            var frame1 = trace.GetFrame(1); // 1 = harmony patch
+				//            var frame2 = trace.GetFrame(2); // 2 = dmd
+				//            var frame3 = trace.GetFrame(3);
+				var frame4 = trace.GetFrame(4);
+				//var method0 = frame0.GetMethod();
+				//            var method1 = frame1.GetMethod();
+				//            var method2 = frame2.GetMethod();
+				//            var method3 = frame3.GetMethod();
+				var method4 = frame4.GetMethod();
 
 				//_logger.Trace($"DiContainer.QueueForInject call stack:");
 				//            _logger.Trace($"  at {method4.DeclaringType.FullName}.{method4.Name}");
@@ -185,24 +210,31 @@ namespace MultiplayerExtensions.Patchers
 
 				_logger.Trace($"DiContainer.QueueForInject called from method: {method4.DeclaringType.FullName}.{method4.Name}, instance type: {instance.GetType().FullName}");
 
-				//_logger.Trace($"DiContainer.QueueForInject called from method: {method.DeclaringType.FullName}.{method.Name}, instance type: {instance.GetType().FullName}");
+				if (!_chromaInjected)
+                {
+                    // Chroma.HarmonyPatches.EnvironmentComponent.RingAwakeInstantiator.QueueInject
+                    _chromaInjected = method4.DeclaringType.FullName.StartsWith("Chroma") && method4.DeclaringType.FullName.EndsWith("RingAwakeInstantiator") &&
+                                           method4.Name == "QueueInject";
+                    if (_chromaInjected)
+                    {
+                        _logger.Warn($"Fallback found Chroma injection, this should not happen!");
+					}
 
-				// Chroma.HarmonyPatches.EnvironmentComponent.RingAwakeInstantiator.QueueInject
-				isChromaInjected = method4.DeclaringType.FullName.StartsWith("Chroma") && method4.DeclaringType.FullName.EndsWith("RingAwakeInstantiator") &&
-                                       method4.Name == "QueueInject";
-
-				if (isChromaInjected)
+				}
+				if (_chromaInjected)
 				{
-					_logger.Trace($"Preventing TrackLaneRing {lightPair.name} injection, parent go name: {lightPair.transform.parent.gameObject.name}");
+					_logger.Debug($"Preventing TrackLaneRing {lightPair.name} injection, parent go name: {lightPair.transform.parent.gameObject.name}");
 					lightPair.transform.parent.gameObject.SetActive(false);
 					//lightPairs.Add(lightPair);
 
 					return false;
-				} else _logger.Trace($"Not preventing injection for LightPairRotationEventEffect {lightPair.name}");
+				} else _logger.Debug($"Not preventing injection for LightPairRotationEventEffect {lightPair.name}");
 			}
 
 			return true;
         }
+
+        #endregion
 
         [AffinityPrefix]
 		[AffinityPatch(typeof(Context), "InstallInstallers", AffinityMethodType.Normal, null, typeof(List<InstallerBase>), typeof(List<Type>), typeof(List<ScriptableObjectInstaller>), typeof(List<MonoInstaller>), typeof(List<MonoInstaller>))]
@@ -300,9 +332,6 @@ namespace MultiplayerExtensions.Patchers
 
 			if (PluginManager.IsEnabled(_chromaMetadata))
 			{
-                //// Temp clear list
-                //lightPairs.Clear();
-
 				var trackLaneRingsManagers = _objectsToEnable.SelectMany(gameObject =>
 					gameObject.transform.GetComponentsInChildren<TrackLaneRingsManager>());
 
